@@ -1,0 +1,1739 @@
+---
+title: "HERO LIWC"
+output: word_document
+date: "2023-02-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr) 
+library(kableExtra) 
+library(DT)
+library(tm)
+library(topicmodels)
+library(reshape2)
+library(ggplot2)
+library(wordcloud)
+library(pals)
+library(SnowballC)
+library(lda)
+library(ldatuning)
+library(flextable)
+library(dplyr)
+library(rstatix)
+```
+
+
+```{r}
+
+head(hero.articles)
+install.packages("caTools")
+library(caTools)
+hero.relability.tweets <- sample.split(Y = hero.tweets$Tweet.Text, SplitRatio = 0.1)
+
+training.set.hero.tweets <- hero.tweets[hero.relability,]
+training.set.hero.tweets
+
+test.set.hero.tweets <- hero.tweets[!hero.relability,]
+test.set.hero.tweets
+
+
+write.csv(training.set.hero.tweets,"/Users/brianaitken/Desktop/Hero Tweets for Coding.csv")
+```
+
+```{r}
+###Loading in Datasets 
+hero.tweets <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /HERO Tweets.csv")
+hero.articles <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /LIWC Analysis/Final HERO datasets/Hero Articles Full LIWC Result.csv")
+hero.transcripts <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /LIWC Analysis/Final HERO datasets/ HERO Transcripts FULL LIWC .csv")
+all.hero.materials <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /LIWC Analysis/Final HERO datasets/All Hero Materails Full LIWC Result.csv")
+```
+
+
+```{r}
+##Tone Analysis - Hero Articles 
+
+#Average positive tone by condition 
+postive.negative.tone.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_postone = mean(tone_pos, na.rm = TRUE), mean_negtone = mean(tone_neg, na.rm =T),pos.sd = sd(tone_pos), neg.sd = sd(tone_neg))
+
+###Postive and Negative Tone Graphs 
+positve.tonegraph <- ggplot(data = subset(postive.negative.tone.data, !is.na(condition)), aes(x = condition, y = mean_postone)) +
+geom_bar(stat="identity", fill = "lightblue")+
+xlab("Type of Media") +
+ylab("Mean Score") +
+  ylim(0,8)+
+  geom_errorbar(aes(ymin=mean_postone - se.pos , ymax=mean_postone+se.pos), width=.2,
+                 position=position_dodge(.9))+
+  ggtitle("Average Positive Tone by Type of Media")+
+  scale_x_discrete(labels = c("Articles", "Tweets", "Transcripts")) 
+
+negtone.graph <- ggplot(data = subset(postive.negative.tone.data, !is.na(condition)), aes(x = condition, y = mean_negtone)) +
+geom_bar(stat="identity", fill = "brown2")+
+xlab("Type of Media") +
+ylab("Mean Score") +
+  ylim(0,8)+
+  geom_errorbar(aes(ymin=mean_negtone - se.neg , ymax=mean_negtone+se.neg), width=.2,
+                 position=position_dodge(.9))+
+ggtitle("Distribution of Skepticism Scores by Treatment Group in the US")
+
+###Overall Tone by condition 
+
+###Making neg_tone - recoded
+
+all.hero.materials$tone_neg.recoded <- all.hero.materials$tone_neg*-1
+
+all.hero.materials$overall_tone <- all.hero.materials$tone_pos + all.hero.materials$tone_neg.recoded
+
+overall_tone.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_overall_tone = mean(overall_tone, na.rm = TRUE), sd_overall_tone = sd(overall_tone))
+
+###Ambivalence Score 
+
+all.hero.materials$dominate <- ifelse(all.hero.materials$tone_pos > all.hero.materials$tone_neg, all.hero.materials$tone_pos, all.hero.materials$tone_neg)
+
+all.hero.materials$conflicting <- ifelse(all.hero.materials$tone_pos > all.hero.materials$tone_neg, all.hero.materials$tone_neg, all.hero.materials$tone_pos)
+
+all.hero.materials$ambivalence <- ((all.hero.materials$conflicting + all.hero.materials$dominate)/2) - (all.hero.materials$dominate - all.hero.materials$conflicting)
+
+ambivalence.tone.data <-all.hero.materials %>% group_by(condition) %>% summarise(mean_ambivalence = mean(ambivalence, na.rm = TRUE), sd_ambivalence = sd(ambivalence))
+
+```
+
+
+```{r}
+##Tone Anovas   
+###install.packages("report")
+library(report)
+all.hero.materials$condition <- as.factor(all.hero.materials$condition)
+###Positive Tone Anova
+pos.tone.anova <- aov(tone_pos ~ condition, data = all.hero.materials)
+summary(pos.tone.anova)
+report(pos.tone.anova)
+##bonferroni correction test postivie tone + TukeyHSD
+pairwise.t.test(all.hero.materials$tone_pos, all.hero.materials$condition, p.adjust.method = "bonferroni")
+pos.tone.HSD <- TukeyHSD(pos.tone.anova)
+pos.tone.HSD
+##Negative tone Anvoa
+neg.tone.anova <- aov(tone_neg ~ condition, data = all.hero.materials)
+summary(neg.tone.anova)
+report(neg.tone.anova)
+###Bonferroni correction test negative tone + TukeyHSD
+pairwise.t.test(all.hero.materials$tone_neg, all.hero.materials$condition, p.adjust.method = "bonferroni")
+neg.tone.HSD <- TukeyHSD(neg.tone.anova)
+neg.tone.HSD
+###Overall Tone Anova 
+overall.tone.anova <- aov(overall_tone ~ condition, data = all.hero.materials)
+summary(overall.tone.anova)
+report(overall.tone.anova)
+##bonferroni correction test overall tone + TukeyHSD
+pairwise.t.test(all.hero.materials$overall_tone, all.hero.materials$condition, p.adjust.method = "bonferroni")
+overall.tone.HSD <- TukeyHSD(overall.tone.anova)
+###Ambivalence 
+ambivalence.anova <- aov(ambivalence ~ condition, data = all.hero.materials)
+summary(ambivalence.anova)
+report(ambivalence.anova)
+##bonferroni correction test ambivalence + TukeyHSD
+pairwise.t.test(all.hero.materials$ambivalence, all.hero.materials$condition, p.adjust.method = "bonferroni")
+ambivalence.HSD <- TukeyHSD(ambivalence.anova)
+
+
+
+###Tone T-test for Campaign tweets 
+hero.campaign.tweets <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /LIWC Analysis/Final HERO datasets/ HERO Campaign ONLY Tweets Full LIWC Result.csv")
+###Positive tone 
+pos.wilcox.test.campaign <- wilcox.test(tone_pos ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+pos.wilcox.test.campaign
+wilcox_effsize(tone_pos ~ condition, data = hero.campaign.tweets)
+###negative tone 
+neg.wilcox.test.campaign <- wilcox.test(tone_neg ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+neg.wilcox.test.campaign
+wilcox_effsize(tone_neg ~ condition, data = hero.campaign.tweets)
+###Overall tone 
+hero.campaign.tweets$tone_neg.recoded <- hero.campaign.tweets$tone_neg*-1
+hero.campaign.tweets$overall_tone <- hero.campaign.tweets$tone_pos + hero.campaign.tweets$tone_neg.recoded
+overall.wilcox.test.campaign <- wilcox.test(overall_tone ~ condition, data = hero.campaign.tweets)
+overall.wilcox.test.campaign
+wilcox_effsize(overall_tone ~ condition, data = hero.campaign.tweets)
+
+###Ambivalence tone 
+hero.campaign.tweets$dominate <- ifelse(hero.campaign.tweets$tone_pos > hero.campaign.tweets$tone_neg, hero.campaign.tweets$tone_pos, hero.campaign.tweets$tone_neg)
+
+hero.campaign.tweets$conflicting <- ifelse(hero.campaign.tweets$tone_pos > hero.campaign.tweets$tone_neg, hero.campaign.tweets$tone_neg, hero.campaign.tweets$tone_pos)
+
+hero.campaign.tweets$ambivalence <- ((hero.campaign.tweets$conflicting + hero.campaign.tweets$dominate)/2) - (hero.campaign.tweets$dominate - hero.campaign.tweets$conflicting)
+ambivalence.wilcox.test.campaign <- wilcox.test(ambivalence ~ condition, data = hero.campaign.tweets)
+ambivalence.wilcox.test.campaign
+wilcox_effsize(ambivalence ~ condition, data = hero.campaign.tweets)
+
+
+
+
+###Tone T-test for Video Transcripts 
+hero.transcripts <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /LIWC Analysis/Final HERO datasets/ HERO Transcripts FULL LIWC .csv")
+###Positive Tone 
+pos.wilcox.test.transcripts <- wilcox.test(tone_pos ~ condition, data = hero.transcripts,conf.int=TRUE,conf.level=0.95)
+pos.wilcox.test.transcripts
+wilcox_effsize(tone_pos ~ condition, data = hero.transcripts)
+
+###negative tone 
+neg.wilcox.test.transcripts  <- wilcox.test(tone_neg ~ condition, data = hero.transcripts)
+neg.wilcox.test.transcripts 
+###Overall tone 
+hero.transcripts$tone_neg.recoded <- hero.transcripts$tone_neg*-1
+hero.transcripts$overall_tone <- hero.transcripts$tone_pos + hero.transcripts$tone_neg.recoded
+overall.wilcox.test.transcripts  <- wilcox.test(overall_tone ~ condition, data = hero.transcripts)
+overall.wilcox.test.transcripts 
+wilcox_effsize(overall_tone ~ condition, data = hero.transcripts)
+
+
+###Ambivalence tone 
+hero.transcripts$dominate <- ifelse(hero.transcripts$tone_pos > hero.transcripts$tone_neg, hero.transcripts$tone_pos, hero.transcripts$tone_neg)
+
+hero.transcripts$conflicting <- ifelse(hero.transcripts$tone_pos > hero.transcripts$tone_neg, hero.transcripts$tone_neg, hero.transcripts$tone_pos)
+hero.transcripts$ambivalence <- ((hero.transcripts$conflicting + hero.transcripts$dominate)/2) - (hero.transcripts$dominate - hero.transcripts$conflicting)
+ambivalence.wilcox.test.transcripts <- wilcox.test(ambivalence ~ condition, data = hero.transcripts)
+ambivalence.wilcox.test.transcripts 
+wilcox_effsize(ambivalence ~ condition, data = hero.transcripts)
+
+
+```
+
+
+```{r}
+###Content Anaylsis 
+###Politics 
+###Politics Mean for LIWC
+politics.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_politics = mean(politic, na.rm = TRUE), politics.sd = sd(politic))
+###Politics Mean for Freq and Direction
+politics.freq.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_politics.freq = mean(Politics_Freq, na.rm = TRUE), politics.freq.sd = sd(Politics_Freq))
+
+politics.direction.data <-all.hero.materials %>% group_by(condition) %>% summarise(mean_politics.direct = mean(Politics_Direction, na.rm = TRUE), politics.direct.sd = sd(Politics_Direction))
+
+###Religion 
+religion.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_religion = mean(relig, na.rm = TRUE), religion.sd = sd(relig))
+
+religion.freq.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_religion.freq = mean(Religion_Freq, na.rm = TRUE), religion.freq.sd = sd(Religion_Freq))
+
+religion.direct.data <-all.hero.materials %>% group_by(condition) %>% summarise(mean_religion.direct = mean(Religion_Direction, na.rm = TRUE), religion.freq.sd = sd(Religion_Direction))
+
+
+###Sexuality 
+sexuality.data <-all.hero.materials %>% group_by(condition) %>% summarise(mean_sexuality= mean(sexual_1, na.rm = TRUE), sexuality.sd = sd(sexual_1))
+
+###Creating Sexuality Freq Variable 
+
+all.hero.materials$Body_Covering_Freq.recoded <- all.hero.materials$Body_Covering_Freq*-1
+all.hero.materials$sexuality.freq <- (rowSums(all.hero.materials[,c("Body_Covering_Freq.recoded", "Body_Part_Freq", "Body_Property_Freq", "Skin_Freq")], na.rm=TRUE))
+
+sexuality.freq.data <-all.hero.materials %>% group_by(condition) %>% summarise(mean_sexuality.freq= mean(sexuality.freq, na.rm = TRUE), sexuality.freq.sd = sd(sexuality.freq))
+
+
+###Content ANOVAs and post hoc tests
+library(report)
+###Political Content Anova
+politic.anova <- aov( politic~ condition, data = all.hero.materials)
+summary(politic.anova)
+report(politic.anova)
+##bonferroni correction test postivie tone + TukeyHSD
+###Political Frequency and Direction Anovas 
+politics.freq.anova <-aov( Politics_Freq~ condition, data = all.hero.materials)
+summary(politics.freq.anova)
+report(politics.freq.anova)
+politics.direction.anova <- aov(Politics_Direction~ condition, data = all.hero.materials)
+summary(politics.direction.anova)
+report(politics.direction.anova)
+##bonferroni correction test postivie tone + TukeyHSD Frequency
+pairwise.t.test(all.hero.materials$Politics_Freq, all.hero.materials$condition, p.adjust.method = "bonferroni")
+politics.freq.HSD <- TukeyHSD(politics.freq.anova)
+politics.freq.HSD
+
+##bonferroni correction test postivie tone + TukeyHSD Direction
+pairwise.t.test(all.hero.materials$Politics_Direction, all.hero.materials$condition, p.adjust.method = "bonferroni")
+politics.direction.HSD <- TukeyHSD(politics.direction.anova)
+politics.direction.HSD
+
+###Religion Content Anova
+relig.anova <- aov( relig~ condition, data = all.hero.materials)
+summary(relig.anova)
+report(relig.anova)
+##bonferroni correction test postivie tone + TukeyHSD relig
+pairwise.t.test(all.hero.materials$relig, all.hero.materials$condition, p.adjust.method = "bonferroni")
+relig.HSD <- TukeyHSD(relig.anova)
+relig.HSD
+###Religion Frequency and Direction Anovas 
+religion.freq.anova <-aov(Religion_Freq~ condition, data = all.hero.materials)
+summary(religion.freq.anova)
+report(religion.freq.anova)
+religion.direction.anova <- aov(Religion_Direction~ condition, data = all.hero.materials)
+summary(religion.direction.anova)
+report(religion.direction.anova)
+##bonferroni correction test postivie tone + TukeyHSD Frequency
+pairwise.t.test(all.hero.materials$Religion_Freq, all.hero.materials$condition, p.adjust.method = "bonferroni")
+religion.freq.HSD <- TukeyHSD(religion.freq.anova)
+religion.freq.HSD
+##bonferroni correction test postivie tone + TukeyHSD Direction
+pairwise.t.test(all.hero.materials$Religion_Direction, all.hero.materials$condition, p.adjust.method = "bonferroni")
+religion.direction.HSD <- TukeyHSD(religion.direction.anova)
+religion.direction.HSD
+###Sexuality Variable Anovas
+sexuality.anova <-aov(sexual_1~ condition, data = all.hero.materials)
+summary(sexuality.anova)
+report(sexuality.anova)
+sexuality.freq.anova <- aov(sexuality.freq~ condition, data = all.hero.materials)
+summary(sexuality.freq.anova)
+report(sexuality.freq.anova)
+##bonferroni correction test postivie tone + TukeyHSD Frequency
+pairwise.t.test(all.hero.materials$sexual_1, all.hero.materials$condition, p.adjust.method = "bonferroni")
+sexuality.HSD <- TukeyHSD(sexuality.anova)
+sexuality.HSD
+##bonferroni correction test postivie tone + TukeyHSD Direction
+pairwise.t.test(all.hero.materials$sexuality.freq, all.hero.materials$condition, p.adjust.method = "bonferroni")
+sexuality.freq.HSD <- TukeyHSD(sexuality.freq.anova)
+sexuality.freq.HSD
+
+###Content T-test for Video Transcripts
+###Politics
+politics.wilcox.test.transcripts <- wilcox.test(politic ~ condition, data = hero.transcripts,conf.int=TRUE,conf.level=0.95)
+politics.wilcox.test.transcripts
+wilcox_effsize(politic ~ condition, data = hero.transcripts)
+###Politics Frequency
+politics.freq.wilcox.test.transcripts  <- wilcox.test(Politics_Freq ~ condition, data = hero.transcripts)
+politics.freq.wilcox.test.transcripts 
+###Politics Direction 
+politics.direction.wilcox.test.transcripts  <- wilcox.test(Politics_Direction~ condition, data = hero.transcripts)
+politics.direction.wilcox.test.transcripts 
+
+###Religion
+relgi.wilcox.test.transcripts  <- wilcox.test(relig ~ condition, data = hero.transcripts)
+relgi.wilcox.test.transcripts 
+###Religion Frequency 
+relgi.freq.wilcox.test.transcripts  <- wilcox.test(Religion_Freq ~ condition, data = hero.transcripts)
+relgi.freq.wilcox.test.transcripts 
+###Religion Direction
+relgi.direction.wilcox.test.transcripts  <- wilcox.test(Religion_Direction ~ condition, data = hero.transcripts)
+relgi.direction.wilcox.test.transcripts 
+
+
+###Sexuality 
+seuxality.wilcox.test.transcripts  <- wilcox.test(sexual_1 ~ condition, data = hero.transcripts)
+seuxality.wilcox.test.transcripts 
+###Sexuality Frequency 
+hero.transcripts$Body_Covering_Freq.recoded <- hero.transcripts$Body_Covering_Freq*-1
+hero.transcripts$sexuality.freq <- (rowSums(hero.transcripts[,c("Body_Covering_Freq.recoded", "Body_Part_Freq", "Body_Property_Freq", "Skin_Freq")], na.rm=TRUE))
+seuxality.freq.wilcox.test.transcripts  <- wilcox.test(sexuality.freq ~ condition, data = hero.transcripts)
+seuxality.freq.wilcox.test.transcripts 
+
+
+
+###Content T-test for Campaign tweets 
+###Politics
+politics.wilcox.test.campaign <- wilcox.test(politic ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+politics.wilcox.test.campaign 
+wilcox_effsize(politic ~ condition, data = hero.campaign.tweets)
+
+###Politics Frequency
+politics.freq.wilcox.test.campaign <- wilcox.test(Politics_Freq ~ condition, data = hero.campaign.tweets)
+politics.freq.wilcox.test.campaign 
+###Politics Direction 
+politics.direction.wilcox.test.campaign <- wilcox.test(Politics_Direction~ condition, data = hero.campaign.tweets)
+politics.direction.wilcox.test.campaign
+
+###Religion
+relgi.wilcox.test.campaign <- wilcox.test(relig ~ condition, data = hero.campaign.tweets)
+relgi.wilcox.test.campaign
+###Religion Frequency 
+relgi.freq.wilcox.test.campaign <- wilcox.test(Religion_Freq ~ condition, data = hero.campaign.tweets)
+relgi.freq.wilcox.test.campaign
+###Religion Direction
+relgi.direction.wilcox.test.campaign <- wilcox.test(Religion_Direction ~ condition, data = hero.campaign.tweets)
+relgi.direction.wilcox.test.campaign
+
+
+###Sexuality 
+seuxality.wilcox.test.campaign <- wilcox.test(sexual_1 ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+seuxality.wilcox.test.campaign
+wilcox_effsize(sexual_1 ~ condition, data = hero.campaign.tweets)
+
+
+###Sexuality Frequency 
+hero.campaign.tweets$Body_Covering_Freq.recoded <- hero.campaign.tweets$Body_Covering_Freq*-1
+hero.campaign.tweets$sexuality.freq <- (rowSums(hero.campaign.tweets[,c("Body_Covering_Freq.recoded", "Body_Part_Freq", "Body_Property_Freq", "Skin_Freq")], na.rm=TRUE))
+seuxality.freq.wilcox.test.campaign <- wilcox.test(sexuality.freq ~ condition, data = hero.campaign.tweets)
+seuxality.freq.wilcox.test.campaign
+```
+
+
+
+
+```{r}
+###Emotions 
+
+###Positive Emotions Means and SD by condition 
+positive.emo.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_pos.emo = mean(emo_pos, na.rm = TRUE), pos.emo.sd = sd(emo_pos))
+
+###Negative Emotions Means and SD by condition 
+negative.emo.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_neg.emo = mean(emo_neg, na.rm = TRUE), neg.emo.sd = sd(emo_neg))
+
+###Anger Means and SD by condition 
+anger.emo.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_anger.emo = mean(emo_anger, na.rm = TRUE), anger.emo.sd = sd(emo_anger))
+
+
+###Anxiety Means and SD by condition 
+anxiety.emo.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_anxiety.emo = mean(emo_anx, na.rm = TRUE), anxiety.emo.sd = sd(emo_anx))
+
+
+
+###Disgust Mean and SD by condition 
+disgust.emo.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_disgust.emo = mean(Disgust, na.rm = TRUE), disgust.emo.sd = sd(Disgust))
+
+
+###Shame Mean and SD by condition 
+shame.emo.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_shame.emo = mean(Shame, na.rm = TRUE), shame.emo.sd = sd(Shame))
+
+
+
+
+###Emotions ANOVAs and Tukey HSD 
+###Positive Emo Anova
+pos.emo.anova<- aov( emo_pos ~ condition, data = all.hero.materials)
+summary(pos.emo.anova)
+report(pos.emo.anova)
+###Negative Emo Anova
+neg.emo.anova<- aov( emo_neg~ condition, data = all.hero.materials)
+summary(neg.emo.anova)
+report(neg.emo.anova)
+neg.emo.HSD <- TukeyHSD(neg.emo.anova)
+###Anger ANOVA
+anger.emo.anova<- aov( emo_anger ~ condition, data = all.hero.materials)
+summary(anger.emo.anova)
+report(anger.emo.anova)
+anger.emo.HSD <- TukeyHSD(anger.emo.anova)
+###Anxiety ANOVA
+anxiety.emo.anova<- aov( emo_anx ~ condition, data = all.hero.materials)
+summary(anxiety.emo.anova)
+report(anxiety.emo.anova)
+###Disgust ANOVA 
+disgust.emo.anova<- aov( Disgust ~ condition, data = all.hero.materials)
+summary(disgust.emo.anova)
+report(disgust.emo.anova)
+###Shame Anova 
+shame.emo.anova<- aov( Shame ~ condition, data = all.hero.materials)
+summary(shame.emo.anova)
+report(shame.emo.anova)
+
+###Content T-test for Video Transcripts
+###Positive Wilcox
+pos.emo.wilcox.test.transcripts <- wilcox.test(emo_pos ~ condition, data = hero.transcripts)
+pos.emo.wilcox.test.transcripts
+wilcox_effsize(emo_pos ~ condition, data = hero.transcripts)
+
+
+###Negative Wilcox 
+neg.emo.wilcox.test.transcripts <- wilcox.test(emo_neg ~ condition, data = hero.transcripts,conf.int=TRUE,conf.level=0.95)
+neg.emo.wilcox.test.transcripts
+wilcox_effsize(emo_neg ~ condition, data = hero.transcripts)
+
+###Anger Wilcox 
+anger.emo.wilcox.test.transcripts <- wilcox.test(emo_anger ~ condition, data = hero.transcripts,conf.int=TRUE,conf.level=0.95)
+anger.emo.wilcox.test.transcripts
+wilcox_effsize(emo_anger ~ condition, data = hero.transcripts)
+
+###Anxiety Wilcox
+anxiety.emo.wilcox.test.transcripts <- wilcox.test(emo_anx ~ condition, data = hero.transcripts)
+anxiety.emo.wilcox.test.transcripts
+wilcox_effsize(emo_anx ~ condition, data = hero.transcripts)
+
+###Disgust Wilcox
+disgust.emo.wilcox.test.transcripts <- wilcox.test(Disgust ~ condition, data = hero.transcripts)
+disgust.emo.wilcox.test.transcripts
+wilcox_effsize(Disgust ~ condition, data = hero.transcripts)
+
+###Shame Wilcox
+shame.emo.wilcox.test.transcripts <- wilcox.test(Shame ~ condition, data = hero.transcripts)
+shame.emo.wilcox.test.transcripts
+wilcox_effsize(Shame ~ condition, data = hero.transcripts)
+
+
+
+
+###Content T-test for Campaign tweets 
+###Positive Wilcox
+pos.emo.wilcox.test.campaign<- wilcox.test(emo_pos ~ condition, data = hero.campaign.tweets)
+pos.emo.wilcox.test.campaign
+wilcox_effsize(emo_pos ~ condition, data = hero.campaign.tweets)
+
+
+###Negative Wilcox 
+neg.emo.wilcox.test.campaign <- wilcox.test(emo_neg ~ condition, data = hero.campaign.tweets)
+neg.emo.wilcox.test.campaign
+wilcox_effsize(emo_neg ~ condition, data = hero.campaign.tweets)
+
+###Anger Wilcox 
+anger.emo.wilcox.test.campaign <- wilcox.test(emo_anger ~ condition, data = hero.campaign.tweets, conf.int=TRUE,conf.level=0.95)
+anger.emo.wilcox.test.campaign
+wilcox_effsize(emo_anger ~ condition, data = hero.campaign.tweets)
+
+###Anxiety Wilcox
+anxiety.emo.wilcox.test.campaign <- wilcox.test(emo_anx ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+anxiety.emo.wilcox.test.campaign
+wilcox_effsize(emo_anx ~ condition, data = hero.campaign.tweets)
+
+###Disgust Wilcox
+disgust.emo.wilcox.test.campaign <- wilcox.test(Disgust ~ condition, data = hero.campaign.tweets)
+disgust.emo.wilcox.test.campaign
+wilcox_effsize(Disgust ~ condition, data = hero.campaign.tweets)
+
+###Shame Wilcox
+shame.emo.wilcox.test.campaign <- wilcox.test(Shame ~ condition, data = hero.campaign.tweets)
+shame.emo.wilcox.test.campaign
+wilcox_effsize(Shame ~ condition, data = hero.campaign.tweets)
+
+
+```
+
+
+
+```{r}
+###Moral Justifications 
+
+###Deontological Means and SD 
+deon.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_deon = mean(Deontology, na.rm = TRUE),deon.sd = sd(Deontology))
+
+###Consequentialist Means and SD 
+conseq.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_conseq = mean(Consequentialism, na.rm = TRUE),conseq.sd = sd(Consequentialism))
+
+
+###Emotive Means and SD
+emotive.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_emotive = mean(Moral_Emotions_General, na.rm = TRUE),emotive.sd = sd(Moral_Emotions_General))
+
+###Moral Justification ANOVAs and Tukey HSD 
+###Deontological  Anova
+deon.anova<- aov( Deontology ~ condition, data = all.hero.materials)
+summary(deon.anova)
+report(deon.anova)
+deon.HSD <- TukeyHSD(deon.anova)
+###Consequentialist  Anova
+conseq.anova<- aov( Consequentialism~ condition, data = all.hero.materials)
+summary(conseq.anova)
+report(conseq.anova)
+conseq.HSD <- TukeyHSD(conseq.anova)
+###Emotive  Anova
+emotive.anova<- aov( Moral_Emotions_General~ condition, data = all.hero.materials)
+summary(emotive.anova)
+report(emotive.anova)
+emotive.HSD <- TukeyHSD(emotive.anova)
+
+
+
+###Content T-test for Video Transcripts
+###Deontological Wilcox
+deon.wilcox.test.transcripts <- wilcox.test(Deontology ~ condition, data = hero.transcripts)
+deon.wilcox.test.transcripts
+wilcox_effsize(Deontology ~ condition, data = hero.transcripts)
+
+
+###Consequentialist Wilcox 
+conseq.wilcox.test.transcripts <- wilcox.test(Consequentialism ~ condition, data = hero.transcripts)
+conseq.wilcox.test.transcripts
+wilcox_effsize(Consequentialism ~ condition, data = hero.transcripts)
+
+###Emotive Wilcox 
+emotive.wilcox.test.transcripts <- wilcox.test(Moral_Emotions_General ~ condition, data = hero.transcripts,conf.int=TRUE,conf.level=0.95)
+emotive.wilcox.test.transcripts
+wilcox_effsize(Moral_Emotions_General ~ condition, data = hero.transcripts)
+
+
+
+###Content T-test for Campaign Tweets
+###Deontological Wilcox
+deon.wilcox.test.campaign<- wilcox.test(Deontology ~ condition, data = hero.campaign.tweets)
+deon.wilcox.test.campaign
+wilcox_effsize(Deontology ~ condition, data = hero.campaign.tweets)
+
+
+###Consequentialist Wilcox 
+conseq.wilcox.test.campaign <- wilcox.test(Consequentialism ~ condition, data = hero.campaign.tweets)
+conseq.wilcox.test.campaign
+wilcox_effsize(Consequentialism ~ condition, data = hero.campaign.tweets)
+
+###Emotive Wilcox 
+emotive.wilcox.test.campaign<- wilcox.test(Moral_Emotions_General ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+emotive.wilcox.test.campaign
+wilcox_effsize(Moral_Emotions_General ~ condition, data = hero.campaign.tweets)
+
+```
+
+
+
+```{r}
+###Moralization Frequency and Direction 
+###Frequency Means and SD 
+moral.freq.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_moral.freq = mean(Morality_Freq, na.rm = TRUE),moral.freq.sd = sd(Morality_Freq))
+
+###Direction Means and SD 
+moral.direct.data <- all.hero.materials %>% group_by(condition) %>% summarise(mean_direct.freq = mean(Morality_Direction, na.rm = TRUE),moral.direct.sd = sd(Morality_Direction))
+
+###Moralization ANOVAs and Tukey HSD 
+###Frequency  Anova
+moral.freq.anova<- aov(Morality_Freq ~ condition, data = all.hero.materials)
+summary(moral.freq.anova)
+report(moral.freq.anova)
+moral.freq.HSD <- TukeyHSD(moral.freq.anova)
+###Direction  Anova
+moral.direct.anova<- aov( Morality_Direction~ condition, data = all.hero.materials)
+summary(moral.direct.anova)
+report(moral.direct.anova)
+moral.direct.HSD <- TukeyHSD(moral.direct.anova)
+
+
+###Moralization T-test for Video Transcripts
+###Freq Wilcox
+moralfreq.wilcox.test.transcripts <- wilcox.test(Morality_Freq ~ condition, data = hero.transcripts)
+moralfreq.wilcox.test.transcripts
+wilcox_effsize(Morality_Freq ~ condition, data = hero.transcripts)
+
+
+###Direct Wilcox 
+moraldirect.wilcox.test.transcripts <- wilcox.test(Morality_Direction ~ condition, data = hero.transcripts)
+moraldirect.wilcox.test.transcripts
+wilcox_effsize(Morality_Direction ~ condition, data = hero.transcripts)
+
+
+###Moralization T-test for Campaign Tweets
+###Freq Wilcox
+moralfreq.wilcox.test.campaign <- wilcox.test(Morality_Freq ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+moralfreq.wilcox.test.campaign
+wilcox_effsize(Morality_Freq ~ condition, data = hero.campaign.tweets)
+
+
+###Direct Wilcox 
+moraldirect.wilcox.test.campaign <- wilcox.test(Morality_Direction ~ condition, data = hero.campaign.tweets,conf.int=TRUE,conf.level=0.95)
+moraldirect.wilcox.test.campaign
+wilcox_effsize(Morality_Direction ~ condition, data = hero.campaign.tweets)
+```
+
+
+
+```{r}
+###Overtime Graphs 
+install.packages("anytime")
+library(anytime)
+library(ggpubr)
+library(ggplot2)
+library(tidyverse)
+install.packages("lubridate")
+library(lubridate)
+class(all.hero.materials$Date.of.Publication)
+ggplot(all.hero.materials,aes(x=Date.of.Publication, y=emo_pos))+geom_line()
+ggplot(all.hero.materials,aes(x=Date.of.Publication, y=emo_neg))+geom_line()
+
+as.factor(all.hero.materials$emo_pos)
+all.hero.materials$condition <- as.factor(all.hero.materials$condition)
+all.hero.materials$Month <- as.factor(all.hero.materials$Month)
+month_names <- list("May 2014", "June 2014", "July 2014", "August 2014", "September 2014", "October 2014", "November 2014", "Decemeber 2014", "January 2015", "Feburary 2015", "March 2015", "April 2015", "May 2015", "June 2015", "July 2015", "August 2015", "September 2015", "October 2015", "November 2015", "Decemeber 2015")
+
+
+###Positive Tone Overtime Graph
+pos.tone.overtime.data <- all.hero.materials %>% group_by(condition, Month) %>% summarise(sum.tone.pos = mean(tone_pos))
+pos.tone.overtime.data$condition <- as.factor(pos.tone.overtime.data$condition)
+
+pos.tone.overtime.graph <- ggplot(pos.tone.overtime.data, aes(x = Month, y = sum.tone.pos, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkdarkgreen")) + 
+  labs(y = "Positive Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Positive Tone from May 2014 to December 2015") 
+
+###Positive Tone Overtime Graph Campaign Tweets
+months.names.campaigns <- list("August 2015", "September 2015", "October 2015", "November 2015", "Decemeber 2015")
+pos.tone.overtime.campagin <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(sum.tone.pos.camp= mean(tone_pos))
+pos.tone.overtime.campagin$condition <- as.factor(pos.tone.overtime.campagin$condition)
+pos.tone.overtime.campagin$Month <- as.factor(pos.tone.overtime.campagin$Month)
+
+pos.tone.overtime.graph.campaign <- ggplot(pos.tone.overtime.campagin, aes(x = Month, y = sum.tone.pos.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Positive Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Positive Tone within Campaign Tweets from August 2015 to December 2015")
+
+
+###Positive Tone Overtime Graph Video Transcripts 
+months.names.transcripts <- list("September 2015", "October 2015", "November 2015")
+pos.tone.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(sum.tone.pos.transcripts = mean(tone_pos))
+pos.tone.overtime.transcripts$condition <- as.factor(pos.tone.overtime.transcripts$condition)
+pos.tone.overtime.transcripts$Month <- as.factor(pos.tone.overtime.transcripts$Month)
+pos.tone.overtime.graph.transcripts <- ggplot(pos.tone.overtime.transcripts, aes(x = Month, y = sum.tone.pos.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Positive Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Positive Tone within Video Transcripts from August 2015 to December 2015")
+
+combined.pos.tone.graphs <- ggarrange(pos.tone.overtime.graph,pos.tone.overtime.graph.campaign,pos.tone.overtime.graph.transcripts, nrow = 3)
+
+
+###Negative Tone Overtime Graph
+neg.tone.overtime.data <- all.hero.materials %>% group_by(condition, Month) %>% summarise(sum.tone.neg = mean(tone_neg))
+neg.tone.overtime.data$condition <- as.factor(pos.tone.overtime.data$condition)
+
+neg.tone.overtime.graph <- ggplot(neg.tone.overtime.data, aes(x = Month, y = sum.tone.neg, group = condition)) +
+  geom_line(aes(color= condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkdarkgreen")) + 
+  labs(y = "Negative Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Negative Tone from May 2014 to December 2015")
+
+###Negative Tone Overtime Graph Campaign Tweets
+neg.tone.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(sum.tone.neg.campagin = mean(tone_neg))
+neg.tone.overtime.campaign$condition <- as.factor(neg.tone.overtime.campaign$condition)
+neg.tone.overtime.campaign$Month <- as.factor(neg.tone.overtime.campaign$Month)
+neg.tone.overtime.graph.campaign <- ggplot(neg.tone.overtime.campaign, aes(x = Month, y = sum.tone.neg.campagin, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Negative Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Negative Tone within Campagin Tweets from August 2015 to November 2015")
+
+###Negative Tone Overtime Graph transcripts
+neg.tone.overtime.transcritpts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(sum.tone.neg.transcripts = mean(tone_neg))
+neg.tone.overtime.transcritpts$condition <- as.factor(neg.tone.overtime.transcritpts$condition)
+neg.tone.overtime.transcritpts$Month <- as.factor(neg.tone.overtime.transcritpts$Month)
+neg.tone.overtime.graph.transcritpts <- ggplot(neg.tone.overtime.transcritpts, aes(x = Month, y = sum.tone.neg.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Negative Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Negative Tone within Video Transcripts from September 2015 to November 2015")
+
+###Combined Tone Graphs 
+combined.neg.tone.graphs <- ggarrange(neg.tone.overtime.graph,neg.tone.overtime.graph.campaign,neg.tone.overtime.graph.transcritpts, nrow = 3)
+
+
+
+###Overall Tone Graph 
+overall.tone.overtime.data <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.overall.tone = mean(overall_tone))
+overall.tone.overtime.data$condition <- as.factor(overall.tone.overtime.data$condition)
+overall.tone.overtime.graph <- ggplot(overall.tone.overtime.data, aes(x = Month, y = mean.overall.tone, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkdarkgreen")) + 
+  labs(y = "Overall Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Overall Tone from May 2014 to December 2015")
+
+###Overall Tone Graph Campagins 
+overall.tone.overtime.campagin <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(sum.tone.overall.campaign= mean(overall_tone))
+overall.tone.overtime.campagin$condition <- as.factor(overall.tone.overtime.campagin$condition)
+overall.tone.overtime.campagin$Month <- as.factor(overall.tone.overtime.campagin$Month)
+
+overall.overtime.graph.campaign <- ggplot(overall.tone.overtime.campagin, aes(x = Month, y = sum.tone.overall.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Overall Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Overall Tone within Campaign Tweets from August 2015 to December 2015")
+
+###Overall Tone Graph Transcripts 
+overall.tone.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(sum.tone.overall.transcripts = mean(overall_tone))
+overall.tone.overtime.transcripts$condition <- as.factor(overall.tone.overtime.transcripts$condition)
+overall.tone.overtime.transcripts$Month <- as.factor(overall.tone.overtime.transcripts$Month)
+overall.tone.overtime.graph.transcripts <- ggplot(overall.tone.overtime.transcripts, aes(x = Month, y = sum.tone.overall.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Overall Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Overall Tone with Video Transcripts from August 2015 to December 2015")
+
+
+###Combined Overall Tone Graphs 
+combined.overall.tone.graphs <- ggarrange(overall.tone.overtime.graph,overall.overtime.graph.campaign,overall.tone.overtime.graph.transcripts, nrow = 3)
+
+
+###Ambivalence Tone Graph
+ambivalence.tone.overtime.data <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.overall.tone = mean(ambivalence))
+ambivalence.tone.overtime.data$condition <- as.factor(ambivalence.tone.overtime.data$condition)
+ambivalence.tone.overtime.graph <- ggplot(ambivalence.tone.overtime.data, aes(x = Month, y = mean.overall.tone, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Ambivalence Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Ambivalence from May 2014 to December 2015")
+
+
+###Ambivalence Tone Graph Campaign 
+ambivalence.tone.overtime.campagin <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(sum.tone.ambivalence.campaign= mean(ambivalence))
+ambivalence.tone.overtime.campagin$condition <- as.factor(ambivalence.tone.overtime.campagin$condition)
+ambivalence.tone.overtime.campagin$Month <- as.factor(ambivalence.tone.overtime.campagin$Month)
+
+ambivalence.overtime.graph.campaign <- ggplot(ambivalence.tone.overtime.campagin, aes(x = Month, y = sum.tone.ambivalence.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Ambivalence Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Ambivalence Tone within Campaign Tweets from August 2015 to December 2015")
+
+###Ambivalence Tone Graph Transcripts  
+ambivalence.tone.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(sum.tone.ambivalence.transcripts = mean(ambivalence))
+ambivalence.tone.overtime.transcripts$condition <- as.factor(ambivalence.tone.overtime.transcripts$condition)
+ambivalence.tone.overtime.transcripts$Month <- as.factor(ambivalence.tone.overtime.transcripts$Month)
+
+ambivalence.tone.overtime.graph.transcripts <- ggplot(ambivalence.tone.overtime.transcripts, aes(x = Month, y = sum.tone.ambivalence.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Ambivalence Tone", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Ambivalence Tone with Video Transcripts from August 2015 to December 2015")
+
+
+###Combined Ambivalence Tone Graphs 
+combined.ambivalence.tone.graphs <- ggarrange(ambivalence.tone.overtime.graph,ambivalence.overtime.graph.campaign,ambivalence.tone.overtime.graph.transcripts, nrow = 3)
+
+
+```
+
+
+
+```{r}
+###Content Overtime Graphs 
+
+###Politics Overtime Count 
+politics.count.overtime.data <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.politics.count = mean(politic))
+
+politics.count.overtime.data$condition <- as.factor(politics.count.overtime.data$condition)
+politics.count.overtime.data$Month <- as.factor(politics.count.overtime.data$Month)
+
+
+politics.count.overtime.graph <- ggplot(politics.count.overtime.data, aes(x = Month, y = mean.politics.count, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkdarkgreen")) + 
+  labs(y = "% of Political Words", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Political Words from May 2014 to December 2015")
+
+
+
+###Politics Overtime Frequency 
+politics.freq.overtime.data <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.politics.freq = mean(Politics_Freq))
+
+politics.freq.overtime.data$condition <- as.factor(politics.freq.overtime.data$condition)
+politics.freq.overtime.data$Month <- as.factor(politics.freq.overtime.data$Month)
+
+politics.freq.overtime.graph <- ggplot(politics.freq.overtime.data, aes(x = Month, y = mean.politics.freq, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkdarkgreen")) + 
+  labs(y = "Politics Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Politics Frequency from May 2014 to December 2015")
+
+
+###Politics Overtime Direction 
+politics.direct.overtime.data <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.politics.direct = mean(Politics_Direction))
+
+politics.direct.overtime.data$condition <- as.factor(politics.direct.overtime.data$condition)
+politics.direct.overtime.data$Month <- as.factor(politics.direct.overtime.data$Month)
+
+
+politics.direct.overtime.graph <- ggplot(politics.direct.overtime.data, aes(x = Month, y = mean.politics.direct, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkdarkgreen")) + 
+  labs(y = "Politics Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Politics Direction from May 2014 to December 2015")
+
+
+###Politics Overtime Count - Campaign 
+politics.count.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.politics.count.campaign = mean(politic))
+
+politics.count.overtime.campaign$condition <- as.factor(politics.count.overtime.campaign$condition)
+politics.count.overtime.campaign$Month <- as.factor(politics.count.overtime.campaign$Month)
+
+
+politics.count.overtime.campaign.graph <- ggplot(politics.count.overtime.campaign, aes(x = Month, y = mean.politics.count.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "% of Political Words", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Political Words from May 2014 to December 2015")
+
+
+###Politics Overtime Frequency - Campaign 
+politics.freq.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.politics.freq.campaign = mean(Politics_Freq))
+
+politics.freq.overtime.campaign$condition <- as.factor(politics.freq.overtime.campaign$condition)
+politics.freq.overtime.campaign$Month <- as.factor(politics.freq.overtime.campaign$Month)
+
+
+politics.freq.overtime.campaign.graph <- ggplot(politics.freq.overtime.campaign, aes(x = Month, y = mean.politics.freq.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Politics Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Politics Frequency from May 2014 to December 2015")
+
+###Politics Overtime Direction - Campaign 
+
+politics.direct.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.politics.direct.campaign = mean(Politics_Direction))
+
+politics.direct.overtime.campaign$condition <- as.factor(politics.direct.overtime.campaign$condition)
+politics.direct.overtime.campaign$Month <- as.factor(politics.direct.overtime.campaign$Month)
+
+
+politics.direct.overtime.campaign.graph <- ggplot(politics.direct.overtime.campaign, aes(x = Month, y = mean.politics.direct.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Politics Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Politics Direction from May 2014 to December 2015")
+
+###Politics Overtime Count - Transcripts
+politics.count.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.politics.count.transcripts = mean(politic))
+
+politics.count.overtime.transcripts$condition <- as.factor(politics.count.overtime.transcripts$condition)
+politics.count.overtime.transcripts$Month <- as.factor(politics.count.overtime.transcripts$Month)
+
+politics.count.overtime.graph.transcripts <- ggplot(politics.count.overtime.transcripts, aes(x = Month, y = mean.politics.count.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "% of Political Words", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Political Words within Video Transcripts from 
+          August 2015 to December 2015")
+
+###Politics Overtime Frequency - Transcripts 
+politics.freq.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.politics.freq.transcripts = mean(Politics_Freq))
+
+politics.freq.overtime.transcripts$condition <- as.factor(politics.freq.overtime.transcripts$condition)
+politics.freq.overtime.transcripts$Month <- as.factor(politics.freq.overtime.transcripts$Month)
+
+politics.freq.overtime.graph.transcripts <- ggplot(politics.freq.overtime.transcripts, aes(x = Month, y = mean.politics.freq.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Political Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Politics Frequency within Video Transcripts from 
+          August 2015 to December 2015")
+
+
+
+###Politics Overtime Direction - Transcripts 
+politics.direct.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.politics.direct.transcripts = mean(Politics_Direction))
+
+politics.direct.overtime.transcripts$condition <- as.factor(politics.direct.overtime.transcripts$condition)
+politics.direct.overtime.transcripts$Month <- as.factor(politics.direct.overtime.transcripts$Month)
+
+politics.direct.overtime.graph.transcripts <- ggplot(politics.direct.overtime.transcripts, aes(x = Month, y = mean.politics.direct.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Political Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Politics Direction within Video Transcripts from August 2015 to December 2015")
+
+
+####Combined Overtime Graphs Politics Count 
+politics.count.combined <- ggarrange(politics.count.overtime.graph,politics.count.overtime.campaign.graph, politics.count.overtime.graph.transcripts, nrow=3)
+
+
+####Combined Overtime Graphs Politics Frequency
+politics.freq.combined <-ggarrange(politics.freq.overtime.graph,politics.freq.overtime.campaign.graph,politics.freq.overtime.graph.transcripts, nrow= 3)
+
+combined.count.freq.pol <- ggarrange(politics.count.combined,politics.freq.combined)
+
+####Combined Overtime Graphs Politics Direction 
+politics.direct.combined <- ggarrange(politics.direct.overtime.graph,politics.direct.overtime.campaign.graph,politics.direct.overtime.graph.transcripts, nrow = 3 )
+
+
+```
+
+```{r}
+###Religion Overtime Count 
+reli.count.overtime <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.reli.count= mean(relig))
+reli.count.overtime$condition <- as.factor(reli.count.overtime$condition)
+reli.count.overtime$Month <- as.factor(reli.count.overtime$Month)
+
+reli.count.overtime.graph <- ggplot(reli.count.overtime, aes(x = Month, y = mean.reli.count, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "% of Religious Words", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Religious Words from May 2014 to December 2015") 
+
+###Religion Overtime Frequency 
+reli.freq.overtime <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.reli.freq= mean(Religion_Freq))
+reli.freq.overtime$condition <- as.factor(reli.freq.overtime$condition)
+reli.freq.overtime$Month <- as.factor(reli.freq.overtime$Month)
+
+reli.freq.overtime.graph <- ggplot(reli.freq.overtime, aes(x = Month, y = mean.reli.freq, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Religious Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Religious Frequency from May 2014 to December 2015") 
+
+###Religion Overtime Direction 
+reli.direct.overtime <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.reli.direct= mean(Religion_Direction))
+reli.direct.overtime$condition <- as.factor(reli.direct.overtime$condition)
+reli.direct.overtime$Month <- as.factor(reli.direct.overtime$Month)
+
+
+reli.direct.overtime.graph <- ggplot(reli.direct.overtime, aes(x = Month, y = mean.reli.direct, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Religious Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Religious Direction from May 2014 to December 2015") 
+
+
+###Religion Overtime Count - Campaign 
+reli.count.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.reli.count.campaign = mean(relig))
+reli.count.overtime.campaign$condition <- as.factor(reli.count.overtime.campaign$condition)
+reli.count.overtime.campaign$Month <- as.factor(reli.count.overtime.campaign$Month)
+
+reli.count.overtime.campaign.graph <- ggplot(reli.count.overtime.campaign, aes(x = Month, y = mean.reli.count.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "% of Religious Words", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Religious Words from May 2014 to December 2015")
+
+###Religion Overtime Frequency - Campaign 
+reli.freq.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.reli.freq.campaign = mean(Religion_Freq))
+reli.freq.overtime.campaign$condition <- as.factor(reli.freq.overtime.campaign$condition)
+reli.freq.overtime.campaign$Month <- as.factor(reli.freq.overtime.campaign$Month)
+
+reli.freq.overtime.campaign.graph <- ggplot(reli.freq.overtime.campaign, aes(x = Month, y = mean.reli.freq.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Religious Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Religious Frequency from May 2014 to December 2015")
+
+
+###Religion Overtime Direction - Campaign 
+reli.direct.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.reli.direct.campaign = mean(Religion_Direction))
+                                                                                                   
+reli.direct.overtime.campaign$condition <- as.factor(reli.direct.overtime.campaign$condition)
+reli.direct.overtime.campaign$Month <- as.factor(reli.direct.overtime.campaign$Month)
+
+reli.direct.overtime.campaign.graph <- ggplot(reli.direct.overtime.campaign, aes(x = Month, y = mean.reli.direct.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Religious Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Religious Direction from May 2014 to December 2015")
+
+
+###Religion Overtime Count - Transcripts 
+reli.count.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.reli.count.transcripts= mean(relig))
+reli.count.overtime.transcripts$condition <- as.factor(reli.count.overtime.transcripts$condition)
+reli.count.overtime.transcripts$Month <- as.factor(reli.count.overtime.transcripts$Month)
+
+reli.count.overtime.transcripts.graph <- ggplot(reli.count.overtime.transcripts, aes(x = Month, y = mean.reli.count.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "% of Religious Words", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Religious Words within Video Transcripts from 
+          August 2015 to December 2015")
+                          
+
+###Religion Overtime Frequency - Transcripts
+reli.freq.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.reli.freq.transcripts= mean(Religion_Freq))
+reli.freq.overtime.transcripts$condition <- as.factor(reli.freq.overtime.transcripts$condition)
+reli.freq.overtime.transcripts$Month <- as.factor(reli.freq.overtime.transcripts$Month)
+
+reli.freq.overtime.transcripts.graph <- ggplot(reli.freq.overtime.transcripts, aes(x = Month, y = mean.reli.freq.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Religious Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Religious Frequency within Video Transcripts from 
+          August 2015 to December 2015")
+
+###Religion Overtime Direction - Transcripts 
+reli.direct.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.reli.direct.transcripts= mean(Religion_Freq))
+reli.direct.overtime.transcripts$condition <- as.factor(reli.direct.overtime.transcripts$condition)
+reli.direct.overtime.transcripts$Month <- as.factor(reli.direct.overtime.transcripts$Month)
+
+reli.direct.overtime.transcripts.graph <- ggplot(reli.direct.overtime.transcripts, aes(x = Month, y = mean.reli.direct.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Religious Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Religious Direction within Video Transcripts from August 2015 to December 2015")
+
+
+
+####Combined Overtime Graphs Religion Count 
+
+combined.relg.count <- ggarrange(reli.count.overtime.graph,reli.count.overtime.campaign.graph,reli.count.overtime.transcripts.graph, nrow=3)
+
+####Combined Overtime Graphs Religion Frequency 
+combined.relg.freq <- ggarrange(reli.freq.overtime.graph,reli.freq.overtime.campaign.graph,reli.freq.overtime.transcripts.graph, nrow=3)
+
+combined.relg.count.freq <- ggarrange(combined.relg.count,combined.relg.freq)
+
+####Combined Overtime Graphs Religion Direction 
+combined.relg.direct <-ggarrange(reli.direct.overtime.graph,reli.direct.overtime.campaign.graph,reli.direct.overtime.transcripts.graph, nrow=3)
+
+
+
+```
+
+
+```{r}
+###Sexuality Count Overtime Graph 
+sexuality.count.overtime <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.sexuality.count= mean(sexual_1))
+sexuality.count.overtime$condition <- as.factor(sexuality.count.overtime$condition)
+sexuality.count.overtime$Month <- as.factor(sexuality.count.overtime$Month)
+
+sexuality.count.overtime.graph <- ggplot(sexuality.count.overtime, aes(x = Month, y = mean.sexuality.count, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "% of Sexual Words", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Sexual Words from May 2014 to December 2015") 
+  
+###Sexuality Frequency Overtime Graph 
+sexuality.freq.overtime <- all.hero.materials %>% group_by(condition, Month) %>% summarise(mean.sexuality.freq= mean(sexuality.freq))
+sexuality.freq.overtime$condition <- as.factor(sexuality.freq.overtime$condition)
+sexuality.freq.overtime$Month <- as.factor(sexuality.freq.overtime$Month)
+
+sexuality.freq.overtime.graph <- ggplot(sexuality.freq.overtime, aes(x = Month, y = mean.sexuality.freq, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Sexuality Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Sexuality Frequency from May 2014 to December 2015") 
+
+###Sexuality Count Overtime Graph - Campaign
+sexuality.count.overtime.campagin <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.sexuality.count.campaign= mean(sexual_1))
+sexuality.count.overtime.campagin$condition <- as.factor(sexuality.count.overtime.campagin$condition)
+sexuality.count.overtime.campagin$Month <- as.factor(sexuality.count.overtime.campagin$Month)
+
+sexuality.count.overtime.graph.campaign <- ggplot(sexuality.count.overtime.campagin, aes(x = Month, y = mean.sexuality.count.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "% of Sexual Words", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Sexual Words from August 2015 to December 2015")
+
+
+###Sexuality Frequency Overtime Graph - Campaign 
+sexuality.freq.overtime.campagin <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.sexuality.freq.campaign= mean(sexuality.freq))
+sexuality.freq.overtime.campagin$condition <- as.factor(sexuality.freq.overtime.campagin$condition)
+sexuality.freq.overtime.campagin$Month <- as.factor(sexuality.freq.overtime.campagin$Month)
+
+sexuality.freq.overtime.graph.campaign <- ggplot(sexuality.freq.overtime.campagin, aes(x = Month, y = mean.sexuality.freq.campaign, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Sexuality Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Sexuality Frequency from August 2015 to December 2015")
+
+
+###Sexuality Count Overtime Graph - Transcripts 
+sexuality.count.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.sexuality.count.transcripts= mean(sexual_1))
+
+sexuality.count.overtime.transcripts$condition <- as.factor(sexuality.count.overtime.transcripts$condition)
+sexuality.count.overtime.transcripts$Month <- as.factor(sexuality.count.overtime.transcripts$Month)
+
+sexuality.count.overtime.transcripts.graph <- ggplot(sexuality.count.overtime.transcripts, aes(x = Month, y = mean.sexuality.count.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "% of Sexual Words", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("% of Sexual Words within Video Transcripts from August 2015 to December 2015")
+
+
+###Sexuality Frequency Overtime Graph - Transcripts 
+sexuality.freq.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.sexuality.freq.transcripts= mean(sexuality.freq))
+sexuality.freq.overtime.transcripts$condition <- as.factor(sexuality.freq.overtime.transcripts$condition)
+sexuality.freq.overtime.transcripts$Month <- as.factor(sexuality.freq.overtime.transcripts$Month)
+
+sexuality.freq.overtime.transcripts.graph <- ggplot(sexuality.freq.overtime.transcripts, aes(x = Month, y = mean.sexuality.freq.transcripts, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Sexuality Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Sexuality Frequency within Video Transcripts from August 2015 to December 2015")
+
+
+###Combined Graphs Sexual Count
+
+combined.sex.count.graph <- ggarrange(sexuality.count.overtime.graph,sexuality.count.overtime.graph.campaign,sexuality.count.overtime.transcripts.graph, nrow = 3)
+
+###Combined Graphs Sexual Freq
+combined.sex.freq.graph <- ggarrange(sexuality.freq.overtime.graph,sexuality.freq.overtime.graph.campaign,sexuality.freq.overtime.transcripts.graph, nrow=3)
+
+###Combined Graphs Sexual 
+combined.sex.count.freq.graph <- ggarrange(combined.sex.count.graph,combined.sex.freq.graph)
+
+```
+
+
+
+```{r}
+
+###Emotions Overtime Graphs 
+
+###Positive Emotion 
+pos.emo.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.pos.emo.overtime= mean(emo_pos))
+pos.emo.overtime$condition <- as.factor(pos.emo.overtime$condition)
+pos.emo.overtime$Month <- as.factor(pos.emo.overtime$Month)
+pos.emo.overtime.graph <- ggplot(pos.emo.overtime, aes(x = Month, y = mean.pos.emo.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Positive Emotion", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Positive Emotion from May 2014 to December 2015")
+
+###Positive Emotion - Campaign
+pos.emo.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.pos.emotion.overtime.camp= mean(emo_pos))
+pos.emo.overtime.campaign$condition <- as.factor(pos.emo.overtime.campaign$condition)
+pos.emo.overtime.campaign$Month <- as.factor(pos.emo.overtime.campaign$Month)
+
+pos.emo.overtime.campaign.graph <- ggplot(pos.emo.overtime.campaign, aes(x = Month, y = mean.pos.emotion.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Positive Emotion", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Positive Emotion within Campaign Tweets from August 2015 to December 2015")
+
+
+
+###Positive Emotion - Transcripts 
+pos.emo.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.pos.emotion.overtime.trans= mean(emo_pos))
+pos.emo.overtime.transcripts$condition <- as.factor(pos.emo.overtime.transcripts$condition)
+pos.emo.overtime.transcripts$Month <- as.factor(pos.emo.overtime.transcripts$Month)
+
+pos.emo.overtime.transcripts.graph <- ggplot(pos.emo.overtime.transcripts, aes(x = Month, y = mean.pos.emotion.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Positive Emotion", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Positive Emotion within Video Transcripts from August 2015 to December 2015")
+
+###Negative Emotion 
+neg.emo.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.neg.emo.overtime= mean(emo_neg))
+neg.emo.overtime$condition <- as.factor(neg.emo.overtime$condition)
+neg.emo.overtime$Month <- as.factor(neg.emo.overtime$Month)
+neg.emo.overtime.graph <- ggplot(neg.emo.overtime, aes(x = Month, y = mean.neg.emo.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Negative Emotion", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Negative Emotion from May 2014 to December 2015")
+
+###Negative Emotion - Campaign
+neg.emo.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.neg.emo.overtime.camp= mean(emo_neg))
+neg.emo.overtime.campaign$condition <- as.factor(neg.emo.overtime.campaign$condition)
+neg.emo.overtime.campaign$Month <- as.factor(neg.emo.overtime.campaign$Month)
+
+neg.emo.overtime.campaign.graph <- ggplot(neg.emo.overtime.campaign, aes(x = Month, y = mean.neg.emo.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Negative Emotion", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Negative Emotion within Campaign Tweets from August 2015 to December 2015")
+
+
+###Negative Emotion - Transcripts 
+neg.emo.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.neg.emo.overtime.trans= mean(emo_neg))
+neg.emo.overtime.transcripts$condition <- as.factor(neg.emo.overtime.transcripts$condition)
+neg.emo.overtime.transcripts$Month <- as.factor(neg.emo.overtime.transcripts$Month)
+
+neg.emo.overtime.transcripts.graph <- ggplot(neg.emo.overtime.transcripts, aes(x = Month, y = mean.neg.emo.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Negative Emotion", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Negative Emotion within Video Transcripts from August 2015 to December 2015")
+
+###Anger 
+anger.emo.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.anger.emo.overtime= mean(emo_anger))
+anger.emo.overtime$condition <- as.factor(anger.emo.overtime$condition)
+anger.emo.overtime$Month <- as.factor(anger.emo.overtime$Month)
+anger.emo.overtime.graph <- ggplot(anger.emo.overtime, aes(x = Month, y = mean.anger.emo.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Anger", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Anger from May 2014 to December 2015")
+
+###Anger - Campaign 
+anger.emo.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.anger.emo.overtime.camp= mean(emo_anger))
+anger.emo.overtime.campaign$condition <- as.factor(anger.emo.overtime.campaign$condition)
+anger.emo.overtime.campaign$Month <- as.factor(anger.emo.overtime.campaign$Month)
+
+anger.emo.overtime.campaign.graph <- ggplot(anger.emo.overtime.campaign, aes(x = Month, y = mean.anger.emo.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Anger", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Anger within Campaign Tweets from August 2015 to December 2015")
+
+
+###Anger - Transcripts 
+anger.emo.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.anger.emo.overtime.trans= mean(emo_anger))
+anger.emo.overtime.transcripts$condition <- as.factor(anger.emo.overtime.transcripts$condition)
+anger.emo.overtime.transcripts$Month <- as.factor(anger.emo.overtime.transcripts$Month)
+
+anger.emo.overtime.transcripts.graph <- ggplot(anger.emo.overtime.transcripts, aes(x = Month, y = mean.anger.emo.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Anger", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Anger within Video Transcripts from August 2015 to December 2015")
+
+###Combine anger graph
+anger.combined.graphs <- ggarrange(anger.emo.overtime.graph,anger.emo.overtime.campaign.graph,anger.emo.overtime.transcripts.graph, nrow=3)
+
+
+###Anxiety 
+anxiety.emo.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.anxiety.emo.overtime= mean(emo_anx))
+anxiety.emo.overtime$condition <- as.factor(anxiety.emo.overtime$condition)
+anxiety.emo.overtime$Month <- as.factor(anxiety.emo.overtime$Month)
+
+anxiety.emo.overtime.graph <- ggplot(anxiety.emo.overtime, aes(x = Month, y = mean.anxiety.emo.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Anxiety", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Anxiety from May 2014 to December 2015")
+
+###Anxiety - Campaign
+anxiety.emo.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month) %>% summarise(mean.anxiety.emo.overtime.camp= mean(emo_anx))
+anxiety.emo.overtime.campaign$condition <- as.factor(anxiety.emo.overtime.campaign$condition)
+anxiety.emo.overtime.campaign$Month <- as.factor(anxiety.emo.overtime.campaign$Month)
+
+anxiety.emo.overtime.campaign.graph <- ggplot(anxiety.emo.overtime.campaign, aes(x = Month, y = mean.anxiety.emo.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Anxiety", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Anxiety within Campaign Tweets from August 2015 to December 2015")
+
+###Anxiety - Transcripts 
+anxiety.emo.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.anxiety.emo.overtime.trans= mean(emo_anx))
+anxiety.emo.overtime.transcripts$condition <- as.factor(anxiety.emo.overtime.transcripts$condition)
+anxiety.emo.overtime.transcripts$Month <- as.factor(anxiety.emo.overtime.transcripts$Month)
+
+anxiety.emo.overtime.transcripts.graph <- ggplot(anxiety.emo.overtime.transcripts, aes(x = Month, y = mean.anxiety.emo.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Anxiety", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Anxiety within Video Transcripts from August 2015 to December 2015")
+ 
+
+
+###Shame 
+shame.overtime <-all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.shame.overtime= mean(Shame))
+shame.overtime$condition <- as.factor(shame.overtime$condition)
+shame.overtime$Month <- as.factor(shame.overtime$Month)
+
+shame.overtime.graph <- ggplot(shame.overtime, aes(x = Month, y = mean.shame.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Shame", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Shame from May 2014 to December 2015")
+
+
+###Shame - Campaign 
+shame.overtime.campaign <-hero.campaign.tweets %>% group_by(condition, Month)%>% summarise(mean.shame.overtime.camp= mean(Shame))
+shame.overtime.campaign$condition <- as.factor(shame.overtime.campaign$condition)
+shame.overtime.campaign$Month <- as.factor(shame.overtime.campaign$Month)
+
+shame.overtime.campaign.graph <- ggplot(shame.overtime.campaign, aes(x = Date, y = mean.shame.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Shame", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Shame within Campaign Tweets from August 2015 to December 2015")
+
+
+###Shame - Transcripts 
+shame.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.shame.overtime.trans= mean(Shame))
+shame.overtime.transcripts$condition <- as.factor(shame.overtime.transcripts$condition)
+shame.overtime.transcripts$Month <- as.factor(shame.overtime.transcripts$Month)
+
+shame.overtime.transcripts.graph <- ggplot(shame.overtime.transcripts, aes(x = Month, y = mean.shame.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Shame", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Shame within Video Transcripts from August 2015 to December 2015")
+
+###Disgust 
+disgust.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.disgust.overtime= mean(Disgust))
+disgust.overtime$condition <- as.factor(disgust.overtime$condition)
+disgust.overtime$Month <- as.factor(disgust.overtime$Month)
+
+disgust.overtime.graph <- ggplot(disgust.overtime, aes(x = Month, y = mean.disgust.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Disgust", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Disgust from May 2014 to December 2015")
+
+
+###Disgust - Campaign 
+disgust.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month)%>% summarise(mean.disgust.overtime.camp= mean(Disgust))
+disgust.overtime.campaign$condition <- as.factor(disgust.overtime.campaign$condition)
+disgust.overtime.campaign$Month <- as.factor(disgust.overtime.campaign$Month)
+
+disgust.overtime.campaign.graph <- ggplot(disgust.overtime.campaign, aes(x = Month, y = mean.disgust.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Disgust", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Disgust within Campaign Tweets from August 2015 to December 2015")
+
+
+###Disgust - Transcripts 
+disgust.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.disgust.overtime.trans= mean(Disgust))
+disgust.overtime.transcripts$condition <- as.factor(disgust.overtime.transcripts$condition)
+disgust.overtime.transcripts$Month <- as.factor(disgust.overtime.transcripts$Month)
+
+disgust.overtime.transcripts.graph <- ggplot(disgust.overtime.transcripts, aes(x = Month, y = mean.disgust.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Disgust", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Disgust within Video Transcripts from August 2015 to December 2015")
+
+###emotions overtime 
+
+
+```
+
+
+```{r}
+####Deontological 
+deon.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.deon.overtime= mean(Deontology))
+deon.overtime$condition <- as.factor(deon.overtime$condition)
+deon.overtime$Month <- as.factor(deon.overtime$Month)
+
+deon.overtime.graph <- ggplot(deon.overtime, aes(x = Month, y = mean.deon.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Deontological Moral Justication", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Deontological Moral Justification from May 2014 to December 2015")
+  
+####Deontological - Campaign 
+deon.overtime.campaign <- hero.campaign.tweets %>%group_by(condition, Month)%>% summarise(mean.deon.overtime.camp= mean(Deontology))
+deon.overtime.campaign$condition <- as.factor(deon.overtime.campaign$condition)
+deon.overtime.campaign$Month <- as.factor(deon.overtime.campaign$Month)
+
+deon.overtime.campaign.graph <- ggplot(deon.overtime.campaign, aes(x = Month, y = mean.deon.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Deontological Moral Justification", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Deontological Moral Justification within Campaign Tweets from August 2015 to December 2015")
+
+
+####Deontological - Transcripts 
+deon.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.deon.overtime.trans= mean(Deontology))
+deon.overtime.transcripts$condition <- as.factor(deon.overtime.transcripts$condition)
+deon.overtime.transcripts$Month <- as.factor(deon.overtime.transcripts$Month)
+
+deon.overtime.transcripts.graph <- ggplot(deon.overtime.transcripts, aes(x = Month, y = mean.deon.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Deontological Moral Justification", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Deontological Moral Justification within Video Transcripts from August 2015 to December 2015")
+
+###Deon + Conseq Graphs combined 
+
+deon.conseq.graphs <- ggarrange(deon.overtime.graph,conseq.overtime.graph)
+
+###Consequentialist
+conseq.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.conseq.overtime= mean(Consequentialism))
+conseq.overtime$condition <- as.factor(conseq.overtime$condition)
+conseq.overtime$Month <- as.factor(conseq.overtime$Month)
+
+conseq.overtime.graph <- ggplot(conseq.overtime, aes(x = Month, y = mean.conseq.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Consequentalist Moral Justication", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Consequentalist Moral Justification from May 2014 to December 2015")
+
+
+
+###Consequentialist - Campaign
+conseq.overtime.campaign <- hero.campaign.tweets %>%group_by(condition, Month)%>% summarise(mean.conseq.overtime.camp= mean(Consequentialism))
+conseq.overtime.campaign$condition <- as.factor(conseq.overtime.campaign$condition)
+conseq.overtime.campaign$Month <- as.factor(conseq.overtime.campaign$Month)
+
+conseq.overtime.campaign.graph <- ggplot(conseq.overtime.campaign, aes(x = Month, y = mean.conseq.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Consequentalistic Moral Justification", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Consequentalistic Moral Justification within Campaign Tweets from August 2015 to December 2015")
+
+
+###Consequentialist - Transcripts 
+conseq.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.conseq.overtime.trans= mean(Consequentialism))
+conseq.overtime.transcripts$condition <- as.factor(conseq.overtime.transcripts$condition)
+conseq.overtime.transcripts$Month <- as.factor(conseq.overtime.transcripts$Month)
+
+conseq.overtime.transcripts.graph <- ggplot(conseq.overtime.transcripts, aes(x = Month, y = mean.conseq.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Consequentalistic Moral Justification", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Consequentalistic Moral Justificatio within Video Transcripts from August 2015 to December 2015")
+
+
+
+###Emotive 
+emotive.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.emotive.overtime= mean(Moral_Emotions_General))
+emotive.overtime$condition <- as.factor(emotive.overtime$condition)
+emotive.overtime$Month <- as.factor(emotive.overtime$Month)
+
+emotive.overtime.graph <- ggplot(emotive.overtime, aes(x = Month, y = mean.emotive.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Emotive Moral Justication", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Emotive Moral Justification from May 2014 to December 2015")
+
+###Emotive - Campaign 
+emotive.overtime.campagin <- hero.campaign.tweets %>% group_by(condition, Month)%>% summarise(mean.emotive.overtime.camp= mean(Moral_Emotions_General))
+emotive.overtime.campagin$condition <- as.factor(emotive.overtime.campagin$condition)
+emotive.overtime.campagin$Month <- as.factor(emotive.overtime.campagin$Month)
+
+emotive.overtime.campagin.graph <- ggplot(emotive.overtime.campagin, aes(x = Month, y = mean.emotive.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Emotive Moral Justification", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Emotive Moral Justification within Campaign Tweets from August 2015 to December 2015")
+
+
+###Emotive - Transcripts 
+emotive.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.emotive.overtime.trans= mean(Moral_Emotions_General))
+emotive.overtime.transcripts$condition <- as.factor(emotive.overtime.transcripts$condition)
+emotive.overtime.transcripts$Month <- as.factor(emotive.overtime.transcripts$Month)
+
+emotive.overtime.transcripts.graph <- ggplot(emotive.overtime.transcripts, aes(x = Month, y = mean.emotive.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Emotive Moral Justification", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Emotive Moral Justificaion within Video Transcripts from August 2015 to December 2015")
+
+###Emotive combined 
+emotive.moral.combined <- ggarrange(emotive.overtime.campagin.graph,emotive.overtime.transcripts.graph, nrow =  2)
+
+
+```
+
+```{r}
+###Moral Freq 
+moral.freq.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.moral.freq.overtime= mean(Morality_Freq))
+moral.freq.overtime$condition <- as.factor(moral.freq.overtime$condition)
+moral.freq.overtime$Month <- as.factor(moral.freq.overtime$Month)
+
+moral.freq.overtime.graph <- ggplot(moral.freq.overtime, aes(x = Month, y = mean.moral.freq.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Moral Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Moral Frequency from May 2014 to December 2015")
+
+###Moral Freq - Campaign 
+moral.freq.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month)%>% summarise(mean.moral.freq.overtime.camp= mean(Morality_Freq))
+moral.freq.overtime.campaign$condition <- as.factor(moral.freq.overtime.campaign$condition)
+moral.freq.overtime.campaign$Month <- as.factor(moral.freq.overtime.campaign$Month)
+
+moral.freq.overtime.campaign.graph <- ggplot(moral.freq.overtime.campaign, aes(x = Month, y = mean.moral.freq.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Moral Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Moral Frequency within Campaign Tweets from August 2015 to December 2015")
+
+
+###Moral Freq - Transcripts 
+moral.freq.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.moral.freq.overtime.trans= mean(Morality_Freq))
+moral.freq.overtime.transcripts$condition <- as.factor(moral.freq.overtime.transcripts$condition)
+moral.freq.overtime.transcripts$Month <- as.factor(moral.freq.overtime.transcripts$Month)
+
+moral.freq.overtime.transcripts.graph <- ggplot(moral.freq.overtime.transcripts, aes(x = Month, y = mean.moral.freq.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Moral Frequency", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Moral Frequency within Video Transcripts from August 2015 to December 2015")
+
+
+###Moral Direction 
+moral.direct.overtime <- all.hero.materials %>% group_by(condition, Month)%>% summarise(mean.moral.direct.overtime= mean(Morality_Direction))
+moral.direct.overtime$condition <- as.factor(moral.direct.overtime$condition)
+moral.direct.overtime$Month <- as.factor(moral.direct.overtime$Month)
+
+moral.direct.overtime.graph <- ggplot(moral.direct.overtime, aes(x = Month, y = mean.moral.direct.overtime, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("News Articles", "Campaign Tweets", "Video Transcripts"),values = c("red", "blue", "darkgreen")) + 
+  labs(y = "Moral Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = month_names) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Moral Direction from May 2014 to December 2015")
+
+###Moral Direction - Campaign 
+moral.direct.overtime.campaign <- hero.campaign.tweets %>% group_by(condition, Month)%>% summarise(mean.moral.direct.overtime.camp= mean(Morality_Direction))
+moral.direct.overtime.campaign$condition <- as.factor(moral.direct.overtime.campaign$condition)
+moral.direct.overtime.campaign$Month <- as.factor(moral.direct.overtime.campaign$Month)
+
+moral.direct.overtime.campaign.graph <- ggplot(moral.direct.overtime.campaign, aes(x = Month, y = mean.moral.direct.overtime.camp, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Moral Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.campaigns) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Moral Direction within Campaign Tweets from August 2015 to December 2015")
+
+
+###Moral Direction - Transcripts 
+moral.direct.overtime.transcripts <- hero.transcripts %>% group_by(condition, Month) %>% summarise(mean.moral.direct.overtime.trans= mean(Morality_Direction))
+moral.direct.overtime.transcripts$condition <- as.factor(moral.direct.overtime.transcripts$condition)
+moral.direct.overtime.transcripts$Month <- as.factor(moral.direct.overtime.transcripts$Month)
+
+
+moral.direct.overtime.transcripts.graph <- ggplot(moral.direct.overtime.transcripts, aes(x = Month, y = mean.moral.direct.overtime.trans, group = condition)) +
+  geom_line(aes(color = condition)) +
+  scale_color_manual(labels = c("Campagin for Houston", "Houston Unites"),values = c("red", "blue")) + 
+  labs(y = "Moral Direction", color = "Media Type")+ 
+  scale_x_discrete(labels = months.names.transcripts) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Moral Direction within Video Transcripts from August 2015 to December 2015")
+
+
+###Combined graphs moral freq 
+
+
+moral.freq.combined.graphs <- ggarrange(moral.freq.overtime.graph,moral.freq.overtime.transcripts.graph, nrow=2)
+
+moral.direct.combined.graphs <- ggarrange(moral.direct.overtime.graph, moral.direct.overtime.transcripts.graph, nrow=2)
+
+moral.freq.direc.combined <- ggarrange(moral.freq.combined.graphs,moral.direct.combined.graphs)
+
+```
+
+
+```{r}
+articles.overtime <- hero.articles %>% group_by(Month, Keyword) %>% summarise(sum.articles = sum(Segment))
+articles.overtime$Month <- as.factor(articles.overtime$Month)
+
+article.months <- list("May 2014", "June 2014", "July 2014", "August 2014", "September 2014", "October 2014", "November 2014", "Decemeber 2014", "January 2015", "Feburary 2015", "March 2015", "April 2015", "June 2015", "July 2015", "August 2015", "September 2015", "October 2015", "November 2015", "Decemeber 2015")
+
+
+
+article.overtime.keyword.graph <-ggplot(articles.overtime, aes(x = Month, y = sum.articles, group = Keyword)) +
+  geom_line(aes(color = Keyword)) + 
+  labs(y = "Number of Articles", color = "Keyword")+
+  scale_x_discrete(labels = article.months) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Number of Articles by Keyword over Time")
+
+nonkeyword.articles.overtime <- hero.articles %>% group_by(Month) %>% summarise(sum.articles = sum(Segment))
+nonkeyword.articles.overtime$Month <- as.factor(nonkeyword.articles.overtime$Month)
+
+
+articles.overtime.graph <-ggplot(nonkeyword.articles.overtime, aes(x = Month, y = sum.articles)) +
+  geom_line(aes(group = 1)) + 
+  labs(y = "Number of Articles", color = "Keyword")+
+  scale_x_discrete(labels = article.months) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Number of Articles over Time")
+
+
+combined.articles.overtime.graphs <- ggarrange(articles.overtime.graph,article.overtime.keyword.graph, nrow = 2)
+```
+
+
+
+```{r}
+
+hero.manual.code <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /LIWC Analysis/Final HERO datasets/All Hero Materails Manual Valid - ba.csv")
+
+hero.liwc.code <- read.csv("/Users/brianaitken/Desktop/UC Davis/Year 2/Fall 2022 /CMN 260/HERO News Articles /LIWC Analysis/Final HERO datasets/All Hero Materails Full LIWC Result - Manual code.csv")
+
+
+cor.test(hero.manual.code$Religion_Direction, hero.liwc.code$Religion_Direction)
+cor.test(hero.manual.code$Body_Part_Freq, hero.liwc.code$Body_Part_Freq)
+
+
+```
